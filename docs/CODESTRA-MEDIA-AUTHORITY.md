@@ -2,9 +2,11 @@
 
 Principal repository: `appolon1908-hue/Codestra-Postgres-Exporter`
 
-Private service identity: `postgres-exporter:9187`
+Canonical DNS identity: `pgex.codestra.media`
 
-No public service hostname is currently assigned or required.
+DNS A target: `37.27.128.39`
+
+Private service identity: `postgres-exporter:9187`
 
 ## Ownership
 
@@ -14,7 +16,9 @@ It does not own PostgreSQL runtime administration, application databases, Promet
 
 ## Exposure
 
-Private/internal only. The native exporter port must not be published to a host public interface or exposed through Caddy/Kong. Prometheus is the approved routine consumer.
+`pgex.codestra.media` is the canonical Codestra hostname for this component, but the exporter remains **private/internal only**. DNS assignment does not authorize Internet reachability.
+
+The native exporter port must not be published to a public host interface or exposed through Caddy/Kong for routine use. Prometheus is the approved routine consumer and should scrape through an approved private or network-restricted path.
 
 ## Database safety
 
@@ -24,6 +28,23 @@ Private/internal only. The native exporter port must not be published to a host 
 - Require encrypted database transport where supported.
 - Load connection material from runtime secret files; never commit connection strings or passwords.
 - Custom queries require explicit review for cost, lock behavior, sensitive columns and metric cardinality.
+
+## Required monitoring coverage
+
+Baseline coverage should include:
+
+- connection count and saturation;
+- transactions and transaction age;
+- locks, blocked queries and deadlocks;
+- database/table/index size;
+- replication health and lag;
+- WAL/checkpoint behavior;
+- cache hit ratio;
+- long-running transactions;
+- vacuum/autovacuum health;
+- dead tuples and reviewed bloat indicators;
+- sequence exhaustion risk;
+- exporter scrape health via `pg_up`.
 
 ## Activation evidence
 
