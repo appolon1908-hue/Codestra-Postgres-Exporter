@@ -1,0 +1,110 @@
+name: Codestra PostgreSQL Exporter Source Sync
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - CODESTRA_UPSTREAM.json
+      - config/codestra/runtime.v1.json
+      - .github/workflows/upstream-source-sync.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: postgres-exporter-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  validate-and-sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750c5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Validate Codestra authority contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          upstream = json.loads(Path("CODESTRA_UPSTREAM.json").read_text())
+          runtime = json.loads(Path("config/codestra/runtime.v1.json").read_text())
+
+          assert upstream["upstream_clone_url"] == "https://github.com/prometheus-community/postgres_exporter.git"
+          assert upstream["upstream_ref"] == "master"
+          assert upstream["import_path"] == "upstream"
+          assert upstream["deployment_enabled"] is False
+          assert upstream["secret_material_allowed_in_git"] is False
+
+          assert runtime["internalEndpoint"] == "http://postgres-exporter:9187/metrics"
+          assert runtime["hostPortPublished"] is False
+          assert runtime["publicHostnameAssigned"] is False
+          assert runtime["publicNativePortAllowed"] is False
+          assert runtime["credentials"]["secretMaterialAllowedInGit"] is False
+          assert runtime["databasePolicy"]["superuserAllowed"] is False
+          assert runtime["databasePolicy"]["applicationWriteAllowed"] is False
+          assert runtime["prometheus"]["targetActivation"] == "pending"
+          assert runtime["activation"]["deploymentEnabled"] is False
+          assert runtime["activation"]["productionApproved"] is False
+          PY
+
+      - name: Import official upstream source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -t values < <(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("CODESTRA_UPSTREAM.json").read_text())
+          print(data["upstream_clone_url"])
+          print(data["upstream_ref"])
+          print(data["import_path"])
+          PY
+          )
+
+          UPSTREAM_URL="${values[0]}"
+          UPSTREAM_REF="${values[1]}"
+          IMPORT_PATH="${values[2]}"
+
+          test "$UPSTREAM_URL" = "https://github.com/prometheus-community/postgres_exporter.git"
+          test "$UPSTREAM_REF" = "master"
+          test "$IMPORT_PATH" = "upstream"
+
+          rm -rf .codestra-upstream-src "$IMPORT_PATH"
+          GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch "$UPSTREAM_REF" "$UPSTREAM_URL" .codestra-upstream-src
+          UPSTREAM_SHA="$(git -C .codestra-upstream-src rev-parse HEAD)"
+          rm -rf .codestra-upstream-src/.git
+          mv .codestra-upstream-src "$IMPORT_PATH"
+
+          export UPSTREAM_URL UPSTREAM_REF UPSTREAM_SHA
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          lock = {
+              "schema_version": "1.0",
+              "upstream_clone_url": os.environ["UPSTREAM_URL"],
+              "upstream_ref": os.environ["UPSTREAM_REF"],
+              "upstream_commit": os.environ["UPSTREAM_SHA"],
+              "import_path": "upstream",
+              "synchronized_at": datetime.now(timezone.utc).isoformat(),
+              "deployment_enabled": False,
+              "secret_material_allowed_in_git": False,
+          }
+          Path("CODESTRA_UPSTREAM_LOCK.json").write_text(json.dumps(lock, indent=2) + "\n")
+          PY
+
+          git config user.name "codestra-upstream-sync"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A upstream CODESTRA_UPSTREAM_LOCK.json
+          git diff --cached --quiet && exit 0
+          git commit -m "vendor: sync official PostgreSQL Exporter upstream ${UPSTREAM_SHA}"
+          git pull --rebase origin main
+          git push origin HEAD:main
