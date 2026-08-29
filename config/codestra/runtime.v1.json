@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "service": "postgres-exporter",
+  "component": "PostgreSQL Exporter",
+  "repository": "appolon1908-hue/Codestra-Postgres-Exporter",
+  "internalEndpoint": "http://postgres-exporter:9187/metrics",
+  "listenAddress": "0.0.0.0:9187",
+  "hostPortPublished": false,
+  "publicHostnameAssigned": false,
+  "publicNativePortAllowed": false,
+  "networks": {
+    "observability": "codestra-observability",
+    "database": "codestra-database",
+    "internetIngressAllowed": false
+  },
+  "credentials": {
+    "uriFile": "/run/secrets/postgres_exporter_uri",
+    "userFile": "/run/secrets/postgres_exporter_user",
+    "passwordFile": "/run/secrets/postgres_exporter_password",
+    "secretMaterialAllowedInGit": false,
+    "openBaoPathPattern": "codestra/<environment>/postgres-exporter/*"
+  },
+  "databasePolicy": {
+    "dedicatedMonitoringIdentityRequired": true,
+    "pgMonitorPreferred": true,
+    "superuserAllowed": false,
+    "databaseOwnerAllowed": false,
+    "applicationWriteAllowed": false,
+    "customQueriesRequireReview": true,
+    "encryptedTransportRequiredWhereSupported": true
+  },
+  "prometheus": {
+    "consumer": "prometheus",
+    "targetActivation": "pending",
+    "requiredHealthMetric": "pg_up",
+    "requiredHealthValue": 1
+  },
+  "activation": {
+    "deploymentEnabled": false,
+    "immutableImageSelected": false,
+    "credentialsInstalled": false,
+    "monitoringRoleApproved": false,
+    "privateNetworksAttached": false,
+    "prometheusScrapeProven": false,
+    "cardinalityReviewed": false,
+    "productionApproved": false
+  }
+}
