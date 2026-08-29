@@ -16,12 +16,14 @@ Official upstream source is imported from [prometheus-community/postgres_exporte
 
 ## Network and exposure
 
+- Canonical hostname: `pgex.codestra.media`
+- DNS A target: `37.27.128.39`
 - Internal service identity: `postgres-exporter:9187`
 - Metrics path: `/metrics`
 - Native port `9187` is private and must never be published to the Internet.
 - The exporter joins only approved observability and database networks.
 - Prometheus is the only routine scrape consumer.
-- No public Codestra hostname is assigned or required. DNS must not be invented to bypass private-network controls.
+- DNS assignment does not authorize public access; `pgex.codestra.media` remains an internal/private monitoring identity.
 
 ## Database access
 
@@ -34,6 +36,10 @@ Connection components are injected from runtime secret files:
 - `/run/secrets/postgres_exporter_password`
 
 Production values belong in OpenBao or the approved runtime secret mechanism, never Git.
+
+## Monitoring target
+
+The Codestra expansion target covers connection saturation, transactions, locks/deadlocks, blocked queries, replication/lag, WAL/checkpoints, cache hit ratio, long-running transactions, database/table/index growth, vacuum/autovacuum health, dead tuples, reviewed bloat indicators and sequence exhaustion risk. Custom SQL collectors require explicit safety and cardinality review.
 
 ## Promotion
 
