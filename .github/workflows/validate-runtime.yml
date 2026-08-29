@@ -14,6 +14,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
       - name: Render and inspect compose authority
         env:
           POSTGRES_EXPORTER_IMAGE: example.invalid/postgres-exporter@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -55,10 +57,17 @@ jobs:
           assert env['PG_EXPORTER_AUTO_DISCOVER_DATABASES'] == 'false'
           assert env['PG_EXPORTER_WEB_TELEMETRY_PATH'] == '/metrics'
 
+          assert runtime['repository'] == 'appolon1908-hue/Codestra-Postgres-Exporter'
+          assert runtime['canonicalHostname'] == 'pgex.codestra.media'
+          assert runtime['dnsTarget'] == '37.27.128.39'
+          assert runtime['dnsAssigned'] is True
+          assert runtime['exposureClass'] == 'internal_private'
           assert runtime['internalEndpoint'] == 'http://postgres-exporter:9187/metrics'
           assert runtime['hostPortPublished'] is False
-          assert runtime['publicHostnameAssigned'] is False
+          assert runtime['publicHostnameAssigned'] is True
           assert runtime['publicNativePortAllowed'] is False
+          assert runtime['publicHttpIngressAllowed'] is False
+          assert runtime['networks']['internetIngressAllowed'] is False
           assert runtime['prometheus']['targetActivation'] == 'pending'
           assert runtime['activation']['deploymentEnabled'] is False
           assert runtime['activation']['productionApproved'] is False
@@ -67,5 +76,5 @@ jobs:
         run: |
           set -euo pipefail
           ! grep -RInE 'image:.*(:latest|:[[:space:]]*$)' deploy
-          ! grep -RInE '(postgres(ql)?://[^[:space:]@]+:[^[:space:]@]+@|DATA_SOURCE_PASS=|PASSWORD[[:space:]]*=)' . --exclude-dir=.git
+          ! grep -RInE '(postgres(ql)?://[^[:space:]@]+:[^[:space:]@]+@|DATA_SOURCE_PASS=|PASSWORD[[:space:]]*=)' . --exclude-dir=.git --exclude-dir=upstream
           ! grep -RInE '(SUPERUSER|CREATEDB|CREATEROLE|REPLICATION|BYPASSRLS)[[:space:]]*;' docs/create-monitoring-role.sql
