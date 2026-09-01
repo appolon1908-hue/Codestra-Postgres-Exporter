@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-SYNC_WORKFLOW_SHA256 = "ba2e1e0f9aad401362df32d1fec42333e3ddebf9bd440e112697671d8440dd06"
+SYNC_WORKFLOW_SHA256 = "519ec8297c1755048f4b28ae42406b06167f63e1293187c2d25857adecbbb423"
 
 
 def logical_shell_lines(source: str) -> tuple[str, ...]:
@@ -102,6 +102,17 @@ def reject_unapproved_pushes(source: str) -> None:
                 command_index += 2 if option in {
                     "-c", "-C", "--git-dir", "--work-tree"
                 } else 1
+            if (
+                command_index < len(words)
+                and words[command_index] == "config"
+                and any(
+                    "alias." in argument.lower()
+                    or "$" in argument
+                    or "`" in argument
+                    for argument in words[command_index + 1 :]
+                )
+            ):
+                raise ValueError("protected_branch_sync_forbidden:dynamic_command")
             if command_index < len(words) and (
                 "$" in words[command_index] or "`" in words[command_index]
             ):
@@ -125,7 +136,7 @@ def reject_unapproved_pushes(source: str) -> None:
 
 
 def validate_sync_branch_authority(source: str) -> None:
-    expected = 'readonly SYNC_BRANCH="sync/postgres-exporter-upstream-${UPSTREAM_SHA}"'
+    expected = 'readonly SYNC_BRANCH="sync/postgres-exporter-upstream-${UPSTREAM_SHA}-${GITHUB_SHA}"'
     lines = logical_shell_lines(source)
     if lines.count(expected) != 1:
         raise ValueError("sync_branch_authority_invalid")
@@ -227,17 +238,23 @@ def validate_sync(source: str, document: dict) -> None:
     validate_sync_branch_authority(source)
     reject_unapproved_pushes(source)
     required = (
+        "github.ref == 'refs/heads/main'",
         "[[ \"$UPSTREAM_REF\" =~ ^[0-9a-f]{40}$ ]]",
         "[[ \"$UPSTREAM_SHA\" == \"$UPSTREAM_REF\" ]]",
-        'readonly SYNC_BRANCH="sync/postgres-exporter-upstream-${UPSTREAM_SHA}"',
+        'readonly SYNC_BRANCH="sync/postgres-exporter-upstream-${UPSTREAM_SHA}-${GITHUB_SHA}"',
         'git read-tree --prefix=upstream/ "${UPSTREAM_SHA}^{tree}"',
         '[[ "$(git rev-parse "$remote_ref")" == "$REMOTE_SHA" ]]',
         'git rev-parse "${remote_ref}:upstream"',
         'git rev-parse "${remote_ref}:CODESTRA_UPSTREAM_LOCK.json"',
-        'git merge-base --is-ancestor "${remote_parent_values[0]}" "$GITHUB_SHA"',
+        '[[ "${remote_parent_values[0]}" == "$GITHUB_SHA" ]]',
         'git diff --name-only "${remote_parent_values[0]}" "$remote_ref"',
         'LOCAL_SHA="$REMOTE_SHA"',
-        "gh pr list",
+        "gh api --method GET",
+        '-f base="main"',
+        '-f head="${GITHUB_REPOSITORY_OWNER}:${SYNC_BRANCH}"',
+        ".head.repo.full_name",
+        '[[ "$pr_head_sha" == "$LOCAL_SHA" ]]',
+        '[[ "$pr_repository" == "$GITHUB_REPOSITORY" ]]',
         "Multiple open synchronization pull requests found.",
         "gh pr create",
         "--base main",
@@ -307,6 +324,7 @@ def validate_secret_scanner(source: str) -> None:
         "PGPASSWORD",
         "DATABASE[_-]?PASSWORD",
         "[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]",
+        "[?&[:space:]])[Pp][Aa][Ss][Ss]",
         "scan_status=$?",
         "Secret scan failed before completing",
     )
