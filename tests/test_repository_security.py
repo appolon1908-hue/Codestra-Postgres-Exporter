@@ -66,11 +66,37 @@ class RepositorySecurityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "protected_branch_sync_forbidden"):
             VALIDATOR.validate_sync(unsafe, self.sync_document)
         for token in (
-            '[[ "$REMOTE_SHA" == "$LOCAL_SHA" ]]',
+            '[[ "$(git rev-parse "$remote_ref")" == "$REMOTE_SHA" ]]',
+            'git rev-parse "${remote_ref}:upstream"',
+            'git rev-parse "${remote_ref}:CODESTRA_UPSTREAM_LOCK.json"',
+            'git merge-base --is-ancestor "${remote_parent_values[0]}" "$GITHUB_SHA"',
+            'git diff --name-only "${remote_parent_values[0]}" "$remote_ref"',
+            'LOCAL_SHA="$REMOTE_SHA"',
             "if (( ${#OPEN_PRS[@]} > 1 )); then",
             'export GIT_AUTHOR_DATE="$UPSTREAM_TIMESTAMP"',
         ):
             self.assertIn(token, self.sync_source)
+        self.assertNotIn('[[ "$REMOTE_SHA" == "$LOCAL_SHA" ]]', self.sync_source)
+
+    def test_retry_reuses_equivalent_existing_branch_after_main_advances(self) -> None:
+        unsafe = self.sync_source.replace('LOCAL_SHA="$REMOTE_SHA"', "true")
+        with self.assertRaisesRegex(ValueError, "reviewed_sync_boundary_missing"):
+            VALIDATOR.validate_sync(unsafe, yaml.safe_load(unsafe))
+
+    def test_only_the_exact_reviewed_push_form_is_allowed(self) -> None:
+        safe = 'git push origin "HEAD:refs/heads/${SYNC_BRANCH}"'
+        for command in (
+            "git -c remote.origin.push=HEAD:refs/heads/main push origin",
+            "git push origin 2>/dev/null HEAD:refs/heads/main",
+            "git push origin HEAD:refs/heads/{main,topic}",
+            "bash -c 'git push origin HEAD:refs/heads/main'",
+        ):
+            with self.subTest(command=command):
+                unsafe = self.sync_source.replace(safe, command)
+                with self.assertRaisesRegex(
+                    ValueError, "protected_branch_sync_forbidden:push_not_exact"
+                ):
+                    VALIDATOR.validate_sync(unsafe, yaml.safe_load(unsafe))
 
     def test_bot_created_pr_dispatches_exact_branch_validation(self) -> None:
         self.assertEqual(
@@ -116,6 +142,28 @@ class RepositorySecurityTests(unittest.TestCase):
             )
             self.assertGreater(result.returncode, 1)
             self.assertIn("symbolic link", result.stderr)
+
+    def test_postgresql_connection_credentials_are_rejected(self) -> None:
+        scanner = ROOT / "scripts/reject_repository_secrets.sh"
+        fixtures = (
+            "postgre" + "sql://monitor:real-password@db.internal/postgres\n",
+            "PG" + "PASSWORD=real-password\n",
+            '"database_' + 'password": "real-password"\n',
+            "DB_" + "PASSWORD=real-password\n",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            credential = Path(directory) / "config.env"
+            for fixture in fixtures:
+                with self.subTest(shape=fixture.split("=", 1)[0]):
+                    credential.write_text(fixture)
+                    result = subprocess.run(
+                        [scanner, directory],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn("secret pattern detected", result.stderr)
 
     def test_validation_classifies_only_exact_upstream_pin_bootstrap(self) -> None:
         source = (ROOT / ".github/workflows/validate.yml").read_text()

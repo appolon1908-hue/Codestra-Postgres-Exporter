@@ -6,11 +6,69 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def logical_shell_lines(source: str) -> tuple[str, ...]:
+    result: list[str] = []
+    pending = ""
+    for raw in source.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        pending += line
+        trailing = len(pending) - len(pending.rstrip("\\"))
+        if trailing % 2 == 1:
+            pending = pending[:-1]
+            continue
+        result.append(pending)
+        pending = ""
+    if pending:
+        result.append(pending)
+    return tuple(result)
+
+
+def reject_unapproved_pushes(source: str) -> None:
+    approved = ["git", "push", "origin", "HEAD:refs/heads/${SYNC_BRANCH}"]
+    for line in logical_shell_lines(source):
+        probe = re.sub(r"\\([^\n])", r"\1", line)
+        if re.search(r"\bgit\b.*\bpush\b", probe) is None:
+            continue
+        try:
+            lexer = shlex.shlex(line, posix=True, punctuation_chars="();&|<>")
+            lexer.whitespace_split = True
+            lexer.commenters = "#"
+            words = list(lexer)
+        except ValueError as error:
+            raise ValueError("sync_shell_parse_failed") from error
+        if words != approved:
+            raise ValueError("protected_branch_sync_forbidden:push_not_exact")
+
+
+def validate_sync_branch_authority(source: str) -> None:
+    expected = 'readonly SYNC_BRANCH="sync/postgres-exporter-upstream-${UPSTREAM_SHA}"'
+    lines = logical_shell_lines(source)
+    if lines.count(expected) != 1:
+        raise ValueError("sync_branch_authority_invalid")
+    for line in lines:
+        if line == expected:
+            continue
+        probe = re.sub(r"\\([^\n])", r"\1", line)
+        if re.search(r"(?:^|[();&|<>\s])SYNC_BRANCH\s*=", probe):
+            raise ValueError("sync_branch_authority_invalid")
+        if re.search(
+            r"\b(?:unset|read|mapfile|declare|typeset|local|export|readonly|printf)\b"
+            r"[^\n]*\bSYNC_BRANCH\b",
+            probe,
+        ):
+            raise ValueError("sync_branch_authority_invalid")
+
+
 def validate_upstream(
     source: dict, lock: dict, *, allow_exact_pin_bootstrap: bool = False
 ) -> None:
@@ -92,18 +150,19 @@ def validate_sync(source: str, document: dict) -> None:
         "pull-requests": "write",
     }:
         raise ValueError("sync_permissions_drift")
-    forbidden = (
-        r"git\s+push\s+origin\s+(?:HEAD:)?(?:main|staging|production)(?:\s|$)",
-        r"git\s+push\s+--force",
-    )
-    if any(re.search(pattern, source) for pattern in forbidden):
-        raise ValueError("protected_branch_sync_forbidden")
+    validate_sync_branch_authority(source)
+    reject_unapproved_pushes(source)
     required = (
         "[[ \"$UPSTREAM_REF\" =~ ^[0-9a-f]{40}$ ]]",
         "[[ \"$UPSTREAM_SHA\" == \"$UPSTREAM_REF\" ]]",
         'readonly SYNC_BRANCH="sync/postgres-exporter-upstream-${UPSTREAM_SHA}"',
         'git read-tree --prefix=upstream/ "${UPSTREAM_SHA}^{tree}"',
-        '[[ "$REMOTE_SHA" == "$LOCAL_SHA" ]]',
+        '[[ "$(git rev-parse "$remote_ref")" == "$REMOTE_SHA" ]]',
+        'git rev-parse "${remote_ref}:upstream"',
+        'git rev-parse "${remote_ref}:CODESTRA_UPSTREAM_LOCK.json"',
+        'git merge-base --is-ancestor "${remote_parent_values[0]}" "$GITHUB_SHA"',
+        'git diff --name-only "${remote_parent_values[0]}" "$remote_ref"',
+        'LOCAL_SHA="$REMOTE_SHA"',
         "gh pr list",
         "Multiple open synchronization pull requests found.",
         "gh pr create",
@@ -168,6 +227,9 @@ def validate_secret_scanner(source: str) -> None:
         "PRIVATE KEY",
         "Authorization",
         "Bearer",
+        "postgres(ql)?://",
+        "PGPASSWORD",
+        "DATABASE[_-]?PASSWORD",
         "scan_status=$?",
         "Secret scan failed before completing",
     )
