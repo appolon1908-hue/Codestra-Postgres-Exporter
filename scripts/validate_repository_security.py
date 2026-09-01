@@ -64,7 +64,7 @@ def reject_unapproved_pushes(source: str) -> None:
                 raise ValueError("protected_branch_sync_forbidden:dynamic_command")
         segments: list[list[str]] = [[]]
         for word in words:
-            if word and set(word) <= set("();&|"):
+            if word in {"{", "}"} or (word and set(word) <= set("();&|")):
                 segments.append([])
             else:
                 segments[-1].append(word)
@@ -84,6 +84,21 @@ def reject_unapproved_pushes(source: str) -> None:
             command_index = index + 1
             while command_index < len(words) and words[command_index].startswith("-"):
                 option = words[command_index]
+                if option == "-c":
+                    if command_index + 1 >= len(words):
+                        raise ValueError("sync_shell_parse_failed")
+                    config = words[command_index + 1]
+                    if (
+                        config.lower().startswith("alias.")
+                        or "$" in config
+                    ):
+                        raise ValueError(
+                            "protected_branch_sync_forbidden:dynamic_command"
+                        )
+                if option.lower().startswith(("-calias.", "--config-env=alias.")):
+                    raise ValueError(
+                        "protected_branch_sync_forbidden:dynamic_command"
+                    )
                 command_index += 2 if option in {
                     "-c", "-C", "--git-dir", "--work-tree"
                 } else 1
@@ -291,6 +306,7 @@ def validate_secret_scanner(source: str) -> None:
         "postgres(ql)?://",
         "PGPASSWORD",
         "DATABASE[_-]?PASSWORD",
+        "[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]",
         "scan_status=$?",
         "Secret scan failed before completing",
     )

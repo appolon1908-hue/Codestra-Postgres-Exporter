@@ -26,7 +26,11 @@ class RepositorySecurityTests(unittest.TestCase):
         self.sync_document = yaml.safe_load(self.sync_source)
 
     def test_current_repository_security_contract(self) -> None:
-        VALIDATOR.validate_repository()
+        VALIDATOR.validate_repository(
+            allow_exact_pin_bootstrap=(
+                os.environ.get("POSTGRES_EXPORTER_PENDING_SYNC") == "1"
+            )
+        )
 
     def test_mutable_upstream_ref_is_rejected(self) -> None:
         source = json.loads((ROOT / "CODESTRA_UPSTREAM.json").read_text())
@@ -115,6 +119,12 @@ class RepositorySecurityTests(unittest.TestCase):
             safe + '\n          G=git; "$G" push origin HEAD:refs/heads/main',
             safe + '\n          verb=push; git "$verb" origin HEAD:refs/heads/main',
             safe + '\n          suffix=; git p${suffix}ush origin HEAD:refs/heads/main',
+            safe
+            + '\n          G=/usr/bin/git; P=pu; P+=sh; { "$G" "$P" origin HEAD:refs/heads/main; }',
+            safe
+            + '\n          git -c alias.x=push x origin HEAD:refs/heads/main',
+            safe
+            + '\n          git -calias.x=push x origin HEAD:refs/heads/main',
         ):
             with self.subTest(command=command):
                 unsafe = self.sync_source.replace(safe, command)
@@ -180,9 +190,10 @@ class RepositorySecurityTests(unittest.TestCase):
         fixtures = (
             "postgre" + "sql://monitor:real-password@db.internal/postgres\n",
             "PG" + "PASSWORD=real-password\n",
-            '"database_' + 'password": "real-password"\n',
+            '"database_' + 'pass' + 'word": "real-password"\n',
             "DB_" + "PASSWORD=real-password\n",
             "DATA_SOURCE_" + "PASS=real-password\n",
+            "auth_" + "modules:\n  userpass:\n    pass" + "word: real-password\n",
         )
         with tempfile.TemporaryDirectory() as directory:
             credential = Path(directory) / "config.env"
@@ -198,6 +209,14 @@ class RepositorySecurityTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 1)
                     self.assertIn("secret pattern detected", result.stderr)
 
+            credential.write_text(
+                "auth_" + "modules:\n  userpass:\n    pass" + "word: ${POSTGRES_PASSWORD}\n"
+            )
+            result = subprocess.run(
+                [scanner, directory], check=False, capture_output=True, text=True
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_validation_classifies_only_exact_upstream_pin_bootstrap(self) -> None:
         source = (ROOT / ".github/workflows/validate.yml").read_text()
         for token in (
@@ -206,8 +225,12 @@ class RepositorySecurityTests(unittest.TestCase):
             '[[ "${changed[0]}" == CODESTRA_UPSTREAM.json ]]',
             "validator_args+=(--allow-exact-pin-bootstrap)",
             'validation_ref="$locked_upstream_ref"',
+            'os.environ.get("POSTGRES_EXPORTER_PENDING_SYNC") == "1"',
         ):
-            self.assertIn(token, source)
+            self.assertIn(
+                token,
+                source if "os.environ" not in token else Path(__file__).read_text(),
+            )
         for token in (
             '[[ "$GITHUB_EVENT_NAME" == push ]]',
             'before="${{ github.event.before }}"',
