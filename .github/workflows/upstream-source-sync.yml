@@ -39,7 +39,30 @@ jobs:
         run: python -m pip install --disable-pip-version-check --no-cache-dir PyYAML==6.0.3
 
       - name: Validate Codestra runtime contract
-        run: python scripts/validate_repository_security.py
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -t refs < <(python - <<'PY'
+          import json
+          from pathlib import Path
+          source = json.loads(Path('CODESTRA_UPSTREAM.json').read_text())
+          lock = json.loads(Path('CODESTRA_UPSTREAM_LOCK.json').read_text())
+          print(source.get('upstream_ref', ''))
+          print(lock.get('upstream_commit', ''))
+          PY
+          )
+          validator_args=()
+          if [[ "${refs[0]}" != "${refs[1]}" ]]; then
+            [[ "$GITHUB_EVENT_NAME" == push ]]
+            before="${{ github.event.before }}"
+            [[ "$before" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$before" != '0000000000000000000000000000000000000000' ]]
+            mapfile -t changed < <(git diff --name-only "$before" "$GITHUB_SHA")
+            (( ${#changed[@]} == 1 ))
+            [[ "${changed[0]}" == CODESTRA_UPSTREAM.json ]]
+            validator_args+=(--allow-exact-pin-bootstrap)
+          fi
+          python scripts/validate_repository_security.py "${validator_args[@]}"
 
       - name: Import exact official upstream source
         shell: bash
@@ -96,7 +119,7 @@ jobs:
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           export GIT_AUTHOR_DATE="$UPSTREAM_TIMESTAMP"
           export GIT_COMMITTER_DATE="$UPSTREAM_TIMESTAMP"
-          SYNC_BRANCH="sync/postgres-exporter-upstream-${UPSTREAM_SHA}"
+          readonly SYNC_BRANCH="sync/postgres-exporter-upstream-${UPSTREAM_SHA}"
           git switch --create "$SYNC_BRANCH"
           git fetch --depth 1 --no-tags "$UPSTREAM_URL" "$UPSTREAM_SHA"
           git rm -r --cached --quiet --ignore-unmatch upstream

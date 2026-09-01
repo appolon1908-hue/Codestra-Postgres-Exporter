@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -31,6 +34,21 @@ class RepositorySecurityTests(unittest.TestCase):
         source["upstream_ref"] = "main"
         with self.assertRaisesRegex(ValueError, "upstream_ref_must_be_exact_commit"):
             VALIDATOR.validate_upstream(source, lock)
+
+    def test_exact_pin_bootstrap_allows_only_source_authority_drift(self) -> None:
+        source = json.loads((ROOT / "CODESTRA_UPSTREAM.json").read_text())
+        lock = json.loads((ROOT / "CODESTRA_UPSTREAM_LOCK.json").read_text())
+        source["upstream_ref"] = "b" * 40
+        with self.assertRaisesRegex(ValueError, "upstream_lock_not_bound"):
+            VALIDATOR.validate_upstream(source, lock)
+        VALIDATOR.validate_upstream(
+            source, lock, allow_exact_pin_bootstrap=True
+        )
+        lock["upstream_commit"] = "c" * 40
+        with self.assertRaisesRegex(ValueError, "upstream_lock_not_bound"):
+            VALIDATOR.validate_upstream(
+                source, lock, allow_exact_pin_bootstrap=True
+            )
 
     def test_runtime_least_privilege_contract_fails_closed(self) -> None:
         runtime = json.loads((ROOT / "config/codestra/runtime.v1.json").read_text())
@@ -77,6 +95,46 @@ class RepositorySecurityTests(unittest.TestCase):
         unsafe = source.replace("pull_request:\n", "pull_request:\n    paths:\n      - scripts/**\n")
         with self.assertRaisesRegex(ValueError, "pull_request_validation_must_be_unconditional"):
             VALIDATOR.validate_workflow(unsafe)
+
+    def test_repository_tests_are_secret_scanned_and_errors_fail_closed(self) -> None:
+        scanner = ROOT / "scripts/reject_repository_secrets.sh"
+        VALIDATOR.validate_secret_scanner(scanner.read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory) / "tests" / "credentials.json"
+            fixture.parent.mkdir()
+            fixture.write_text(
+                "".join(('"client', 'Secret": "actual-sensitive-value"\n'))
+            )
+            result = subprocess.run(
+                [scanner, directory], check=False, capture_output=True, text=True
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("secret pattern detected", result.stderr)
+            os.symlink(Path(directory) / "missing", Path(directory) / "dangling")
+            result = subprocess.run(
+                [scanner, directory], check=False, capture_output=True, text=True
+            )
+            self.assertGreater(result.returncode, 1)
+            self.assertIn("symbolic link", result.stderr)
+
+    def test_validation_classifies_only_exact_upstream_pin_bootstrap(self) -> None:
+        source = (ROOT / ".github/workflows/validate.yml").read_text()
+        for token in (
+            "Classify an exact upstream-pin bootstrap",
+            '(( ${#changed[@]} == 1 ))',
+            '[[ "${changed[0]}" == CODESTRA_UPSTREAM.json ]]',
+            "validator_args+=(--allow-exact-pin-bootstrap)",
+            'validation_ref="$locked_upstream_ref"',
+        ):
+            self.assertIn(token, source)
+        for token in (
+            '[[ "$GITHUB_EVENT_NAME" == push ]]',
+            'before="${{ github.event.before }}"',
+            '(( ${#changed[@]} == 1 ))',
+            '[[ "${changed[0]}" == CODESTRA_UPSTREAM.json ]]',
+            "validator_args+=(--allow-exact-pin-bootstrap)",
+        ):
+            self.assertIn(token, self.sync_source)
 
     def test_whitespace_gate_checks_the_committed_base_to_head_range(self) -> None:
         source = (ROOT / ".github/workflows/validate.yml").read_text()

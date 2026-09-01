@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 from pathlib import Path
@@ -10,7 +11,9 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-def validate_upstream(source: dict, lock: dict) -> None:
+def validate_upstream(
+    source: dict, lock: dict, *, allow_exact_pin_bootstrap: bool = False
+) -> None:
     expected = {
         "component": "PostgreSQL Exporter",
         "codestra_repository": "appolon1908-hue/Codestra-Postgres-Exporter",
@@ -34,7 +37,15 @@ def validate_upstream(source: dict, lock: dict) -> None:
     ):
         if lock.get(key) != expected[key]:
             raise ValueError(f"upstream_lock_drift:{key}")
-    if lock.get("upstream_ref") != ref or lock.get("upstream_commit") != ref:
+    locked_ref = lock.get("upstream_ref")
+    locked_commit = lock.get("upstream_commit")
+    if (
+        not isinstance(locked_ref, str)
+        or re.fullmatch(r"[0-9a-f]{40}", locked_ref) is None
+        or locked_commit != locked_ref
+    ):
+        raise ValueError("upstream_lock_not_bound_to_exact_ref")
+    if locked_ref != ref and not allow_exact_pin_bootstrap:
         raise ValueError("upstream_lock_not_bound_to_exact_ref")
 
 
@@ -90,7 +101,7 @@ def validate_sync(source: str, document: dict) -> None:
     required = (
         "[[ \"$UPSTREAM_REF\" =~ ^[0-9a-f]{40}$ ]]",
         "[[ \"$UPSTREAM_SHA\" == \"$UPSTREAM_REF\" ]]",
-        'SYNC_BRANCH="sync/postgres-exporter-upstream-${UPSTREAM_SHA}"',
+        'readonly SYNC_BRANCH="sync/postgres-exporter-upstream-${UPSTREAM_SHA}"',
         'git read-tree --prefix=upstream/ "${UPSTREAM_SHA}^{tree}"',
         '[[ "$REMOTE_SHA" == "$LOCAL_SHA" ]]',
         "gh pr list",
@@ -103,6 +114,10 @@ def validate_sync(source: str, document: dict) -> None:
         'export GIT_COMMITTER_DATE="$UPSTREAM_TIMESTAMP"',
         "Validate Codestra runtime contract",
         "validate_repository_security.py",
+        '[[ "$GITHUB_EVENT_NAME" == push ]]',
+        'before="${{ github.event.before }}"',
+        '[[ "${changed[0]}" == CODESTRA_UPSTREAM.json ]]',
+        "validator_args+=(--allow-exact-pin-bootstrap)",
     )
     for token in required:
         if token not in source:
@@ -123,6 +138,13 @@ def validate_workflow(source: str) -> None:
         "git rev-parse 'HEAD:upstream'",
         '[[ "$vendored_tree" == "$official_tree" ]]',
         'git diff --check "$base_sha" "$GITHUB_SHA" -- . \':(exclude)upstream\'',
+        "Classify an exact upstream-pin bootstrap",
+        "POSTGRES_EXPORTER_PENDING_SYNC",
+        '[[ "${changed[0]}" == CODESTRA_UPSTREAM.json ]]',
+        "validator_args+=(--allow-exact-pin-bootstrap)",
+        'validation_ref="$locked_upstream_ref"',
+        'scripts/reject_repository_secrets.sh .',
+        'base_sha="$POSTGRES_EXPORTER_VALIDATION_BASE_SHA"',
     )
     for token in required:
         if token not in source:
@@ -135,13 +157,35 @@ def validate_workflow(source: str) -> None:
         raise ValueError("whitespace_check_must_use_committed_range")
 
 
-def validate_repository() -> None:
+def validate_secret_scanner(source: str) -> None:
+    required = (
+        "set -Eeuo pipefail",
+        "-type f -o -type l",
+        'if [[ -L "$path" ]]',
+        "grep -aEiqz",
+        "client[_-]?secret",
+        "[[:space:]]*[:=]",
+        "PRIVATE KEY",
+        "Authorization",
+        "Bearer",
+        "scan_status=$?",
+        "Secret scan failed before completing",
+    )
+    for token in required:
+        if token not in source:
+            raise ValueError(f"secret_scanner_boundary_missing:{token}")
+    if '-path "$search_root/tests"' in source or "--exclude-dir=tests" in source:
+        raise ValueError("repository_tests_must_be_secret_scanned")
+
+
+def validate_repository(*, allow_exact_pin_bootstrap: bool = False) -> None:
     paths = {
         "source": ROOT / "CODESTRA_UPSTREAM.json",
         "lock": ROOT / "CODESTRA_UPSTREAM_LOCK.json",
         "sync": ROOT / ".github/workflows/upstream-source-sync.yml",
         "validate": ROOT / ".github/workflows/validate.yml",
         "runtime": ROOT / "config/codestra/runtime.v1.json",
+        "secret_scanner": ROOT / "scripts/reject_repository_secrets.sh",
     }
     for path in paths.values():
         if not path.is_file() or path.is_symlink():
@@ -151,18 +195,27 @@ def validate_repository() -> None:
     runtime = json.loads(paths["runtime"].read_text())
     sync_source = paths["sync"].read_text()
     validate_source = paths["validate"].read_text()
-    validate_upstream(source, lock)
+    secret_scanner_source = paths["secret_scanner"].read_text()
+    validate_upstream(
+        source, lock, allow_exact_pin_bootstrap=allow_exact_pin_bootstrap
+    )
     validate_runtime(runtime)
     validate_sync(sync_source, yaml.safe_load(sync_source))
     yaml.safe_load(validate_source)
     validate_workflow(validate_source)
+    validate_secret_scanner(secret_scanner_source)
     if (ROOT / "upstream/.git").exists():
         raise ValueError("nested_upstream_git_metadata_forbidden")
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--allow-exact-pin-bootstrap", action="store_true")
+    arguments = parser.parse_args()
     try:
-        validate_repository()
+        validate_repository(
+            allow_exact_pin_bootstrap=arguments.allow_exact_pin_bootstrap
+        )
     except (OSError, ValueError, json.JSONDecodeError, yaml.YAMLError) as error:
         raise SystemExit(f"POSTGRES_EXPORTER_SOURCE_SECURITY=FAIL ERROR={error}") from error
     print("POSTGRES_EXPORTER_SOURCE_SECURITY=PASS")
