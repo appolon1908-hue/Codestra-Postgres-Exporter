@@ -176,11 +176,32 @@ def public_exposure_violations(path: Path, lowered: str) -> tuple[str, ...]:
     violations: list[str] = []
     relative_parts = {part.lower() for part in path.parts}
     name = path.name.lower()
+    kubernetes_source = bool(
+        relative_parts.intersection({"k8s", "kubernetes", "helm", "templates"})
+        or re.search(
+            r"(?im)^\s*kind\s*:\s*(?:service|deployment|pod|daemonset|statefulset|ingress)\s*$",
+            lowered,
+        )
+    )
     deployment_source = (
-        "deploy" in relative_parts
-        or "deployment" in relative_parts
-        or "manifests" in relative_parts
+        bool(
+            relative_parts.intersection(
+                {
+                    "deploy",
+                    "deployment",
+                    "manifests",
+                    "k8s",
+                    "kubernetes",
+                    "helm",
+                    "templates",
+                    "kong",
+                    "gateway",
+                    "edge",
+                }
+            )
+        )
         or "compose" in name
+        or "kong" in name
         or name == "caddyfile"
         or name.endswith(".caddy")
     )
@@ -195,7 +216,44 @@ def public_exposure_violations(path: Path, lowered: str) -> tuple[str, ...]:
     if any(re.search(pattern, lowered) for pattern in route_patterns):
         violations.append("route to the private exporter")
 
-    if path.suffix.lower() in {".yaml", ".yml"} and re.search(
+    kong_exporter_service = bool(
+        re.search(
+            r"(?im)^\s*url\s*:\s*[\"']?https?://postgres[-_]exporter(?::9187)?(?:[/\"'\s]|$)",
+            lowered,
+        )
+        or (
+            re.search(r"(?im)^\s*host\s*:\s*[\"']?postgres[-_]exporter[\"']?\s*$", lowered)
+            and re.search(r"(?im)^\s*port\s*:\s*9187\s*$", lowered)
+        )
+    )
+    if kong_exporter_service and re.search(r"(?im)^\s*routes\s*:", lowered):
+        violations.append("declarative Kong route to the private exporter")
+
+    if kubernetes_source:
+        public_service_type = re.search(
+            r"(?im)^\s*type\s*:\s*(?:loadbalancer|nodeport)\s*$",
+            lowered,
+        )
+        exporter_service_port = re.search(
+            r"(?im)^\s*(?:port|targetport|nodeport)\s*:\s*9187\s*$",
+            lowered,
+        )
+        if public_service_type and exporter_service_port:
+            violations.append("public Kubernetes Service for 9187")
+        if (
+            re.search(r"(?im)^\s*hostnetwork\s*:\s*true\s*$", lowered)
+            and re.search(r"(?im)^\s*containerport\s*:\s*9187\s*$", lowered)
+        ):
+            violations.append("host-networked Kubernetes listener for 9187")
+        if (
+            re.search(r"(?im)^\s*kind\s*:\s*ingress\s*$", lowered)
+            and re.search(
+                r"(?im)^\s*(?:name|serviceName)\s*:\s*[\"']?postgres[-_]exporter[\"']?\s*$",
+                lowered,
+            )
+        ):
+            violations.append("Kubernetes Ingress route to the private exporter")
+    elif path.suffix.lower() in {".yaml", ".yml"} and re.search(
         r"(?ms)^\s*ports\s*:\s*(?:\[[^\]]*9187[^\]]*\]|\n(?:\s+.*\n)*?\s+.*9187)",
         lowered,
     ):
