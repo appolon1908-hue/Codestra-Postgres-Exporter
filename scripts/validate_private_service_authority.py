@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = Path(__file__).resolve()
+ROOT = SCRIPT.parents[1]
 POLICY = ROOT / "config" / "private-service-authority.v1.json"
 README = ROOT / "README.md"
 FORBIDDEN_HOST = "pgex" + ".codestra.media"
@@ -80,9 +81,9 @@ def validate_explicit_deprecation_text() -> None:
 
 
 def validate_active_source() -> None:
-    # The machine policy and the principal README are the only active files
-    # allowed to name the retired hostname, solely to prohibit and deprecate it.
-    allowed_literal_paths = {POLICY.resolve(), README.resolve()}
+    # These files must contain policy literals so they can explicitly prohibit
+    # the retired hostname and detect dangerous route/public-bind patterns.
+    allowed_policy_literal_paths = {POLICY.resolve(), README.resolve(), SCRIPT}
     ignored_parts = {".git", "upstream"}
     ignored_suffixes = {
         ".png",
@@ -109,7 +110,7 @@ def validate_active_source() -> None:
             continue
         if path.suffix.lower() in ignored_suffixes:
             continue
-        if path.resolve() in allowed_literal_paths:
+        if path.resolve() in allowed_policy_literal_paths:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         if FORBIDDEN_HOST in text:
