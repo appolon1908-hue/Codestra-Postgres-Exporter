@@ -11,6 +11,7 @@ from typing import Any
 SCRIPT = Path(__file__).resolve()
 ROOT = SCRIPT.parents[1]
 POLICY = ROOT / "config" / "private-service-authority.v1.json"
+RUNTIME = ROOT / "config" / "codestra" / "runtime.v1.json"
 README = ROOT / "README.md"
 FORBIDDEN_HOST = "pgex" + ".codestra.media"
 PRIVATE_IDENTITY = "postgres-exporter:9187"
@@ -21,18 +22,18 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
-def load_policy() -> dict[str, Any]:
+def load_json(path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(POLICY.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        fail(f"invalid private-service authority JSON: {exc}")
+        fail(f"invalid JSON {path.relative_to(ROOT)}: {exc}")
     if not isinstance(value, dict):
-        fail("private-service authority root must be an object")
+        fail(f"{path.relative_to(ROOT)} root must be an object")
     return value
 
 
 def validate_policy() -> None:
-    policy = load_policy()
+    policy = load_json(POLICY)
     if policy.get("schema_version") != "1.0":
         fail("schema_version must be 1.0")
     if policy.get("status") != "ACTIVE_SOURCE_AUTHORITY":
@@ -65,6 +66,46 @@ def validate_policy() -> None:
         fail("required private-service controls are incomplete")
 
 
+def validate_runtime_network_policy() -> None:
+    runtime = load_json(RUNTIME)
+    if runtime.get("service") != "postgres-exporter":
+        fail("runtime service identity is incorrect")
+    if runtime.get("repository") != "appolon1908-hue/Codestra-Postgres-Exporter":
+        fail("runtime repository authority is incorrect")
+    if runtime.get("internalEndpoint") != f"http://{PRIVATE_IDENTITY}/metrics":
+        fail("runtime internal metrics endpoint is incorrect")
+
+    # Listening on all interfaces *inside the isolated container* is valid only
+    # while no host port or internet ingress exists. These controls are checked
+    # together so an internal process bind is never confused with public exposure.
+    if runtime.get("listenAddress") not in {"0.0.0.0:9187", ":9187"}:
+        fail("runtime listen address is outside the approved container-local forms")
+    if runtime.get("hostPortPublished") is not False:
+        fail("PostgreSQL Exporter host port must not be published")
+    if runtime.get("publicHostnameAssigned") is not False:
+        fail("PostgreSQL Exporter public hostname must remain unassigned")
+    if runtime.get("publicNativePortAllowed") is not False:
+        fail("PostgreSQL Exporter native port may not be public")
+
+    networks = runtime.get("networks")
+    if not isinstance(networks, dict):
+        fail("runtime network policy is missing")
+    if networks.get("observability") != "codestra-observability":
+        fail("approved observability network is missing")
+    if networks.get("database") != "codestra-database":
+        fail("approved database network is missing")
+    if networks.get("internetIngressAllowed") is not False:
+        fail("internet ingress must remain disabled")
+
+    activation = runtime.get("activation")
+    if not isinstance(activation, dict):
+        fail("runtime activation policy is missing")
+    if activation.get("deploymentEnabled") is not False:
+        fail("deployment must remain disabled in source authority")
+    if activation.get("productionApproved") is not False:
+        fail("production approval must remain false")
+
+
 def validate_explicit_deprecation_text() -> None:
     readme = README.read_text(encoding="utf-8")
     required_fragments = (
@@ -82,7 +123,7 @@ def validate_explicit_deprecation_text() -> None:
 
 def validate_active_source() -> None:
     # These files must contain policy literals so they can explicitly prohibit
-    # the retired hostname and detect dangerous route/public-bind patterns.
+    # the retired hostname and detect dangerous route/publication patterns.
     allowed_policy_literal_paths = {POLICY.resolve(), README.resolve(), SCRIPT}
     ignored_parts = {".git", "upstream"}
     ignored_suffixes = {
@@ -99,7 +140,6 @@ def validate_active_source() -> None:
         "reverse_proxy postgres-exporter",
         "upstream postgres-exporter",
         "host_port: 9187",
-        "0.0.0.0:9187",
         "[::]:9187",
     )
 
@@ -129,6 +169,7 @@ def validate_active_source() -> None:
 
 def main() -> None:
     validate_policy()
+    validate_runtime_network_policy()
     validate_explicit_deprecation_text()
     validate_active_source()
     print("PostgreSQL Exporter private-service authority: PASS")
