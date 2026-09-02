@@ -10,6 +10,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / "config" / "private-service-authority.v1.json"
+README = ROOT / "README.md"
 FORBIDDEN_HOST = "pgex" + ".codestra.media"
 PRIVATE_IDENTITY = "postgres-exporter:9187"
 
@@ -63,8 +64,25 @@ def validate_policy() -> None:
         fail("required private-service controls are incomplete")
 
 
+def validate_explicit_deprecation_text() -> None:
+    readme = README.read_text(encoding="utf-8")
+    required_fragments = (
+        "PUBLIC_HOSTNAME=NONE",
+        f"PRIVATE_SERVICE_IDENTITY={PRIVATE_IDENTITY}",
+        "EXPOSURE=PRIVATE_INTERNAL_ONLY",
+        FORBIDDEN_HOST,
+        "is forbidden",
+        "must never be published to a public host interface",
+    )
+    for fragment in required_fragments:
+        if fragment not in readme:
+            fail(f"README private-service authority is incomplete: missing {fragment}")
+
+
 def validate_active_source() -> None:
-    allowed_literal_paths = {POLICY.resolve()}
+    # The machine policy and the principal README are the only active files
+    # allowed to name the retired hostname, solely to prohibit and deprecate it.
+    allowed_literal_paths = {POLICY.resolve(), README.resolve()}
     ignored_parts = {".git", "upstream"}
     ignored_suffixes = {
         ".png",
@@ -110,6 +128,7 @@ def validate_active_source() -> None:
 
 def main() -> None:
     validate_policy()
+    validate_explicit_deprecation_text()
     validate_active_source()
     print("PostgreSQL Exporter private-service authority: PASS")
 
