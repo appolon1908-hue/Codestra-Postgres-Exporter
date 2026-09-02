@@ -136,7 +136,7 @@ def validate_active_source() -> None:
     # These files must contain policy literals so they can explicitly prohibit
     # the retired hostname and detect dangerous route/publication patterns.
     allowed_policy_literal_paths = {POLICY.resolve(), README.resolve(), SCRIPT}
-    ignored_parts = {".git", "upstream"}
+    ignored_parts = {".git", "upstream", "__pycache__"}
     ignored_suffixes = {
         ".png",
         ".jpg",
@@ -146,6 +146,7 @@ def validate_active_source() -> None:
         ".woff2",
         ".zip",
         ".gz",
+        ".pyc",
     }
     for path in ROOT.rglob("*"):
         if not path.is_file():
