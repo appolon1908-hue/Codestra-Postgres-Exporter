@@ -2,7 +2,7 @@ name: codestra-postgres-exporter
 
 services:
   postgres-exporter:
-    image: ${POSTGRES_EXPORTER_IMAGE:?POSTGRES_EXPORTER_IMAGE must be an immutable image reference containing @sha256:}
+    image: quay.io/prometheuscommunity/postgres-exporter@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
     restart: unless-stopped
     user: "65534:65534"
     read_only: true

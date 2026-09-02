@@ -20,6 +20,8 @@ This repository owns PostgreSQL Exporter packaging and configuration. It does no
 
 Official upstream source is imported from `prometheus-community/postgres_exporter` into `upstream/` by a controlled synchronization workflow and recorded in `CODESTRA_UPSTREAM_LOCK.json`.
 
+The accepted repository-only runtime candidate is upstream `v0.20.1` at tag commit `867fbcac31cd18c143e244190ea9168cca069827`, pinned as `quay.io/prometheuscommunity/postgres-exporter@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e`. This selection does not activate or deploy it.
+
 The machine-readable authority is [`config/private-service-authority.v1.json`](config/private-service-authority.v1.json).
 
 ## Network and exposure
@@ -55,6 +57,8 @@ The Codestra expansion target covers connection saturation, transactions, locks/
 
 ```bash
 python scripts/validate_private_service_authority.py
+python scripts/validate_repository_readiness.py
+python -m unittest discover -s tests -p 'test_*.py'
 ```
 
 The private-authority validator requires the exact stable repository ID, no public hostname, the private service identity, denied Caddy/Kong/public-port publication, and scans active source for the retired hostname and common public-exposure markers. Repository CI also validates the hardened Compose candidate, external secret references, immutable-image requirement, private network-only exposure, disabled database auto-discovery, bounded collection timeout, least-privilege role template, and activation gates.
