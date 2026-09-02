@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,17 @@ RUNTIME = ROOT / "config" / "codestra" / "runtime.v1.json"
 README = ROOT / "README.md"
 FORBIDDEN_HOST = "pgex" + ".codestra.media"
 PRIVATE_IDENTITY = "postgres-exporter:9187"
+REQUIRED_CONTROLS = [
+    "immutable image digest",
+    "private monitoring and database network attachment",
+    "dedicated non-superuser monitoring role",
+    "runtime secret-file injection",
+    "approved custom queries only",
+    "connection and query timeouts",
+    "bounded metric cardinality",
+    "successful private Prometheus scrape",
+    "source-to-runtime and rollback evidence",
+]
 
 
 def fail(message: str) -> None:
@@ -61,8 +73,7 @@ def validate_policy() -> None:
     ):
         if policy.get(gate) is not False:
             fail(f"{gate} must be false")
-    controls = policy.get("required_controls")
-    if not isinstance(controls, list) or len(controls) < 8:
+    if policy.get("required_controls") != REQUIRED_CONTROLS:
         fail("required private-service controls are incomplete")
 
 
@@ -136,13 +147,6 @@ def validate_active_source() -> None:
         ".zip",
         ".gz",
     }
-    public_route_markers = (
-        "reverse_proxy postgres-exporter",
-        "upstream postgres-exporter",
-        "host_port: 9187",
-        "[::]:9187",
-    )
-
     for path in ROOT.rglob("*"):
         if not path.is_file():
             continue
@@ -153,18 +157,56 @@ def validate_active_source() -> None:
         if path.resolve() in allowed_policy_literal_paths:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        if FORBIDDEN_HOST in text:
+        lowered = text.lower()
+        if FORBIDDEN_HOST in lowered:
             fail(
                 "retired public hostname remains in active source: "
                 f"{path.relative_to(ROOT)}"
             )
-        lowered = text.lower()
-        for marker in public_route_markers:
-            if marker in lowered:
-                fail(
-                    "possible public PostgreSQL Exporter exposure marker "
-                    f"{marker!r} in {path.relative_to(ROOT)}"
-                )
+        for violation in public_exposure_violations(path, lowered):
+            fail(
+                "possible public PostgreSQL Exporter exposure "
+                f"{violation} in {path.relative_to(ROOT)}"
+            )
+
+
+def public_exposure_violations(path: Path, lowered: str) -> tuple[str, ...]:
+    """Return conservative violations only for deployment/edge sources."""
+
+    violations: list[str] = []
+    relative_parts = {part.lower() for part in path.parts}
+    name = path.name.lower()
+    deployment_source = (
+        "deploy" in relative_parts
+        or "deployment" in relative_parts
+        or "manifests" in relative_parts
+        or "compose" in name
+        or name == "caddyfile"
+        or name.endswith(".caddy")
+    )
+    if not deployment_source:
+        return ()
+
+    route_patterns = (
+        r"\breverse_proxy\s+[^\n]*postgres[-_]exporter",
+        r"\bupstream\s+[^\n{]*postgres[-_]exporter",
+        r"\bproxy_pass\s+[^\n;]*postgres[-_]exporter",
+    )
+    if any(re.search(pattern, lowered) for pattern in route_patterns):
+        violations.append("route to the private exporter")
+
+    if path.suffix.lower() in {".yaml", ".yml"} and re.search(
+        r"(?ms)^\s*ports\s*:\s*(?:\[[^\]]*9187[^\]]*\]|\n(?:\s+.*\n)*?\s+.*9187)",
+        lowered,
+    ):
+        violations.append("host port publication for 9187")
+
+    if re.search(
+        r"(?i)(?:hostport|host_port|published)\s*[:=]\s*[\"']?9187\b",
+        lowered,
+    ):
+        violations.append("published/host port 9187")
+    return tuple(violations)
 
 
 def main() -> None:
