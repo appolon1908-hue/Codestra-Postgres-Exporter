@@ -21,6 +21,7 @@ REQUIRED = (
     "docs/UPGRADE.md",
     "codestra/release/runtime-image.lock.json",
     "codestra/release/config-bundle.manifest.json",
+    ".github/workflows/release-config-bundle.yml",
     "scripts/build_config_bundle.py",
 )
 
@@ -96,6 +97,18 @@ def validate() -> None:
                 continue
             if not re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", reference):
                 fail(f"mutable action reference in {workflow.relative_to(ROOT)}: {reference}")
+    release_workflow = (
+        ROOT / ".github/workflows/release-config-bundle.yml"
+    ).read_text(encoding="utf-8")
+    expected_authority = (
+        "appolon1908-hue/Codestra-Telemetry/.github/workflows/"
+        "reusable-release-config-bundle.yml@"
+        "777292781faeca9348d0e2ecdce6ac3f50c91d93"
+    )
+    if expected_authority not in release_workflow:
+        fail("release caller must pin the accepted Telemetry workflow authority")
+    if "component_id: postgres-exporter" not in release_workflow:
+        fail("release caller component identity mismatch")
 
 
 def main() -> None:
