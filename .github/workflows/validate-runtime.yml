@@ -58,13 +58,13 @@ jobs:
           assert env['PG_EXPORTER_WEB_TELEMETRY_PATH'] == '/metrics'
 
           assert runtime['repository'] == 'appolon1908-hue/Codestra-Postgres-Exporter'
-          assert runtime['canonicalHostname'] == 'pgex.codestra.media'
-          assert runtime['dnsTarget'] == '37.27.128.39'
-          assert runtime['dnsAssigned'] is True
+          assert runtime['canonicalHostname'] == 'postgres-exporter'
+          assert runtime['dnsTarget'] is None
+          assert runtime['dnsAssigned'] is False
           assert runtime['exposureClass'] == 'internal_private'
           assert runtime['internalEndpoint'] == 'http://postgres-exporter:9187/metrics'
           assert runtime['hostPortPublished'] is False
-          assert runtime['publicHostnameAssigned'] is True
+          assert runtime['publicHostnameAssigned'] is False
           assert runtime['publicNativePortAllowed'] is False
           assert runtime['publicHttpIngressAllowed'] is False
           assert runtime['networks']['internetIngressAllowed'] is False

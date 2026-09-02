@@ -2,9 +2,7 @@
 
 Principal repository: `appolon1908-hue/Codestra-Postgres-Exporter`
 
-Canonical DNS identity: `pgex.codestra.media`
-
-DNS A target: `37.27.128.39`
+Public DNS identity: none
 
 Private service identity: `postgres-exporter:9187`
 
@@ -16,7 +14,7 @@ It does not own PostgreSQL runtime administration, application databases, Promet
 
 ## Exposure
 
-`pgex.codestra.media` is the canonical Codestra hostname for this component, but the exporter remains **private/internal only**. DNS assignment does not authorize Internet reachability.
+The exporter has no public hostname and remains **private/internal only**. Its container-local service identity is the only routine monitoring address.
 
 The native exporter port must not be published to a public host interface or exposed through Caddy/Kong for routine use. Prometheus is the approved routine consumer and should scrape through an approved private or network-restricted path.
 
