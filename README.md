@@ -18,7 +18,7 @@ Deployment is disabled. This repository contains no production credential, datab
 
 This repository owns PostgreSQL Exporter packaging and configuration. It does not own PostgreSQL application schema, database administration, Prometheus scrape policy, Grafana dashboards, Alertmanager routing, infrastructure orchestration, Caddy/Kong publication, or secrets.
 
-Official upstream source is imported from [prometheus-community/postgres_exporter](https://github.com/prometheus-community/postgres_exporter) into `upstream/` by a controlled synchronization workflow and recorded in `CODESTRA_UPSTREAM_LOCK.json`.
+Official upstream source is imported from `prometheus-community/postgres_exporter` into `upstream/` by a controlled synchronization workflow and recorded in `CODESTRA_UPSTREAM_LOCK.json`.
 
 The machine-readable authority is [`config/private-service-authority.v1.json`](config/private-service-authority.v1.json).
 
@@ -35,7 +35,7 @@ The machine-readable authority is [`config/private-service-authority.v1.json`](c
 
 ## Database access
 
-Use a dedicated monitoring identity with the minimum supported PostgreSQL monitoring privileges. It must not be a superuser, database owner, replication administrator, or application writer.
+Use a dedicated application-independent monitoring role with the minimum supported PostgreSQL monitoring privileges. It must not be a superuser, database owner, replication administrator, bypass-RLS role, or application writer.
 
 Connection components are injected from runtime secret files:
 
@@ -47,17 +47,19 @@ Production values belong in OpenBao or the approved runtime secret mechanism, ne
 
 Custom queries require review for cost, lock behavior, sensitive columns, and cardinality. They must never export business-row contents, credentials, customer data, or unbounded identifiers as labels.
 
+## Monitoring target
+
+The Codestra expansion target covers connection saturation, transactions, locks/deadlocks, blocked queries, replication/lag, WAL/checkpoints, cache hit ratio, long-running transactions, database/table/index growth, vacuum/autovacuum health, dead tuples, reviewed bloat indicators, and sequence exhaustion risk. Custom SQL collectors require explicit safety, cost, sensitive-column, and cardinality review.
+
 ## Validation
 
 ```bash
 python scripts/validate_private_service_authority.py
 ```
 
-The validator requires the exact stable repository ID, no public hostname, the private service identity, denied Caddy/Kong/public-port publication, and scans active source for the retired hostname and common public-exposure markers.
+The private-authority validator requires the exact stable repository ID, no public hostname, the private service identity, denied Caddy/Kong/public-port publication, and scans active source for the retired hostname and common public-exposure markers. Repository CI also validates the hardened Compose candidate, external secret references, immutable-image requirement, private network-only exposure, disabled database auto-discovery, bounded collection timeout, least-privilege role template, and activation gates.
 
 ## Promotion
-
-After bootstrap, use:
 
 ```text
 feature/* -> development -> test -> staging -> production -> main
@@ -74,4 +76,4 @@ A merge does not authorize deployment. Activation requires:
 7. backup, rollback, and source-to-runtime evidence;
 8. confirmation that port `9187` and the service API remain inaccessible from the public Internet.
 
-No production database, exporter, Prometheus, Caddy, Kong, DNS, secret, or runtime is changed by documenting or validating this authority.
+`DEPLOYMENT_ENABLED=NO` remains binding until environment promotion gates explicitly authorize activation. No production database, exporter, Prometheus, Caddy, Kong, DNS, secret, or runtime is changed by documenting or validating this authority.
