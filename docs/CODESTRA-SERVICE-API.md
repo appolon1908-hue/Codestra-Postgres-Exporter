@@ -6,10 +6,10 @@ This repository owns the **postgresql-health-capacity-replication-metrics-author
 
 PostgreSQL Exporter keeps its native API and protocol. The shared Codestra control plane in `appolon1908-hue/Codestra-Telemetry` performs only sanitized health, readiness, contract, topology, and immutable-release read-back. It never proxies SQL queries, native metric bodies, database credentials, dashboard mutations, secret values, or credential issuance.
 
-Public hostname: none  
-Private service identity: `postgres-exporter:9187`  
-Native exposure: `internal_private`  
-Deployment class: `agent`  
+Public hostname: none
+Private service identity: `postgres-exporter:9187`
+Native exposure: `internal_private`
+Deployment class: `agent`
 Contract: `codestra/api/service-contract.v1.json`
 
 ## Native operations
